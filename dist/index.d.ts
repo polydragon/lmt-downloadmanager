@@ -25,6 +25,7 @@ export declare class DownloadManager {
     private _getLocalFilename(playlist);
     private _getUrlsFromPlaylist(m3u8);
     private _processItem(uuid, playlist);
+    private _cleanupTempFiles(uuid);
     init(download: string, temp: string, ffm: string, ffp: string): void;
     add(playlist: Playlist): string;
     delete(uuid: string): void;

@@ -94,7 +94,7 @@ class DownloadManager {
             let chunkProgress = new Map();
             this._emit('download-status', { uuid: uuid, status: 'Getting chunks to download...' });
             let urls = yield this._getUrlsFromPlaylist(playlist.video.url).catch(err => {
-                return reject(`Couldn't get URLs to download: ${err}`);
+                return reject(`Couldn't get chunks to download: ${err}`);
             });
             let mapper = el => this._processChunk(el, this._getTempFilename(el, uuid)).onProgress(p => {
                 chunkProgress.set(p.chunk, p.progress);
@@ -109,27 +109,39 @@ class DownloadManager {
             this._emit('download-status', { uuid: uuid, status: 'Downloading chunks' });
             pMap(urls, mapper, { concurrency: 4 }).then(result => {
                 this._emit('download-status', { uuid: uuid, status: 'Merging chunks' });
-                let ff = ffmpeg();
+                let concatStr = '';
                 for (let res of result) {
                     if (res.success) {
-                        ff.input(res.local);
+                        concatStr += `|${res.local}`;
                     }
                     else {
                         return reject(`Failed to download at least one file`);
                     }
                 }
-                ff
+                ffmpeg()
+                    .outputOptions([
+                    `-i concat:${concatStr.substr(1)}`,
+                    '-c copy',
+                    '-bsf:a aac_adtstoasc',
+                    '-vsync 2',
+                    '-movflags +faststart'
+                ])
                     .on('end', () => {
-                    this._emit('download-completed', { uuid: uuid });
+                    this._cleanupTempFiles(uuid);
                     return resolve();
                 })
                     .on('error', (err) => {
-                    this._emit('download-errored', { uuid: uuid });
+                    this._cleanupTempFiles(uuid);
                     return reject(err);
                 })
-                    .mergeToFile(this._getLocalFilename(playlist));
+                    .output(this._getLocalFilename(playlist))
+                    .run();
             });
         }));
+    }
+    _cleanupTempFiles(uuid) {
+        this._emit('download-status', { uuid: uuid, status: 'Cleaning temporary files' });
+        fs.removeSync(path.join(this._downloadDirectoryTemp, uuid));
     }
     init(download, temp, ffm, ffp) {
         this._downloadDirectory = download;
@@ -148,7 +160,15 @@ class DownloadManager {
         this._emit('download-deleted', { uuid: uuid });
     }
     start(uuid) {
-        this._processItem(uuid, this._queue.get(uuid));
+        let item = this._queue.get(uuid);
+        this._queue.delete(uuid);
+        this._processItem(uuid, item)
+            .then(result => {
+            this._emit('download-completed', { uuid: uuid });
+        })
+            .catch(err => {
+            this._emit('download-errored', { uuid: uuid, error: err });
+        });
     }
 }
 exports.DownloadManager = DownloadManager;
