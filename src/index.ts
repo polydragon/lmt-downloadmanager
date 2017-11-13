@@ -37,6 +37,9 @@ export class DownloadManager {
     events: events.EventEmitter = new (events.EventEmitter)();
     private _eventCache: any;
 
+    private _paused: boolean = false;
+    private _running: boolean = false;
+
     private _emit(channel: string, obj: any) {
         if (this._eventCache && (this._eventCache.channel === channel && JSON.stringify(this._eventCache.obj) === JSON.stringify(obj))) {
             return;
@@ -195,6 +198,7 @@ export class DownloadManager {
         let uuid = uuidv4();
         this._queue.set(uuid, playlist);
         this._emit('download-queued', { uuid: uuid, display: `${playlist.user.name}: ${playlist.video.id}` });
+        this.loop();
         return uuid;
     }
 
@@ -203,16 +207,52 @@ export class DownloadManager {
         this._emit('download-deleted', { uuid: uuid });
     }
 
-    start(uuid: string) {
+    start(uuid: string): Promise<void> {
         let item = this._queue.get(uuid);
         this._queue.delete(uuid);
 
-        this._processItem(uuid, item)
+        return this._processItem(uuid, item)
             .then(result => {
                 this._emit('download-completed', { uuid: uuid });
             })
             .catch(err => {
                 this._emit('download-errored', { uuid: uuid, error: err });
             });
+    }
+
+    async loop() {
+        if (this._running || this._paused) {
+            return;
+        }
+
+        this._running = true;
+
+        while (this._queue.size > 0 && !this._paused) {
+            await this.start(this._queue.keys().next().value); // Grab the next one in the list and start it
+            this.saveQueue();
+        }
+
+        this._running = false;
+    }
+
+    isPaused() {
+        return this._paused;
+    }
+
+    isRunning() {
+        return this._running;
+    }
+
+    pause() {
+        this._paused = true;
+    }
+
+    resume() {
+        this._paused = false;
+        this.loop();
+    }
+
+    saveQueue() {
+        // Save queue to JSON/Database
     }
 }

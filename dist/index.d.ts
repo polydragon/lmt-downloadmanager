@@ -19,6 +19,8 @@ export declare class DownloadManager {
     private _downloadMask;
     events: events.EventEmitter;
     private _eventCache;
+    private _paused;
+    private _running;
     private _emit(channel, obj);
     private _processChunk(url, dest);
     private _getTempFilename(url, uuid);
@@ -29,5 +31,11 @@ export declare class DownloadManager {
     init(download: string, temp: string, ffm: string, ffp: string): void;
     add(playlist: Playlist): string;
     delete(uuid: string): void;
-    start(uuid: string): void;
+    start(uuid: string): Promise<void>;
+    loop(): Promise<void>;
+    isPaused(): boolean;
+    isRunning(): boolean;
+    pause(): void;
+    resume(): void;
+    saveQueue(): void;
 }
