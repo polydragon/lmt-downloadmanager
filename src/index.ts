@@ -5,6 +5,7 @@ const axios = require('axios');
 import path = require('path');
 import fs = require('fs-extra');
 import ffmpeg = require('fluent-ffmpeg');
+import events = require('events');
 
 function uuidv4() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
@@ -33,6 +34,22 @@ export class DownloadManager {
     private _downloadDirectoryTemp: string;
     private _downloadMask: string;
 
+    events: events.EventEmitter = new (events.EventEmitter)();
+    private _eventCache: any;
+
+    private _emit(channel: string, obj: any) {
+        if (this._eventCache && (this._eventCache.channel === channel && JSON.stringify(this._eventCache.obj) === JSON.stringify(obj))) {
+            return;
+        } else {
+            this._eventCache = {
+                channel: channel,
+                obj: obj
+            };
+        }
+
+        this.events.emit(channel, obj);
+    }
+
     private _processChunk(url: string, dest: string) {
         return new PProgress((resolve, reject, progress) => {
             fs.ensureDirSync(path.dirname(dest));
@@ -44,17 +61,16 @@ export class DownloadManager {
             });
 
             download.on('start', (filesize) => {
-                console.log(`Downloading ${url}, filesize: ${filesize}`);
+                //console.log(`Downloading ${url}, filesize: ${filesize}`);
             });
 
             download.on('end', (output) => {
-                console.log(`Ended, ${output}`);
+                //console.log(`Ended, ${output}`);
                 return resolve({ success: true, local: dest });
             });
 
             download.on('progress', (p) => {
-                console.log(`Progress ${p}`);
-                progress(p);
+                progress({ chunk: path.basename(url, '.ts'), progress: p });
             });
         });
     }
@@ -103,14 +119,32 @@ export class DownloadManager {
 
     private _processItem(uuid: string, playlist: Playlist): Promise<void> {
         return new Promise(async (resolve, reject) => {
+            this._emit('download-started', { uuid: uuid });
+
+            let chunkProgress: Map<string, number> = new Map<string, number>();
+
+            this._emit('download-status', { uuid: uuid, status: 'Getting chunks to download...' });
+
             let urls = await this._getUrlsFromPlaylist(playlist.video.url).catch(err => {
                 return reject(`Couldn't get URLs to download: ${err}`);
             });
 
-            let mapper = el => this._processChunk(el, this._getTempFilename(el, uuid)).onProgress(p => { console.log(`onProgress: ${p}`); });
+            let mapper = el => this._processChunk(el, this._getTempFilename(el, uuid)).onProgress(p => {
+                chunkProgress.set(p.chunk, p.progress);
+                let total = 0;
+
+                for (let val of chunkProgress.values()) {
+                    if (val) total += val;
+                }
+
+                total = Math.floor((total / (<string[]>urls).length) * 100);
+                this._emit('download-progress', { uuid: uuid, percent: total });
+            });
+
+            this._emit('download-status', { uuid: uuid, status: 'Downloading chunks' });
 
             pMap(urls, mapper, { concurrency: 4 }).then(result => {
-                console.log('DONE', result);
+                this._emit('download-status', { uuid: uuid, status: 'Merging chunks' });
 
                 let ff = ffmpeg();
 
@@ -122,14 +156,16 @@ export class DownloadManager {
                     }
                 }
 
-                ff.on('end', () => {
-                    return resolve();
-                })
-                .on('error', (err) => {
-                    console.error(err);
-                    return reject(err);
-                })
-                .mergeToFile(this._getLocalFilename(playlist));
+                ff
+                    .on('end', () => {
+                        this._emit('download-completed', { uuid: uuid });
+                        return resolve();
+                    })
+                    .on('error', (err) => {
+                        this._emit('download-errored', { uuid: uuid });
+                        return reject(err);
+                    })
+                    .mergeToFile(this._getLocalFilename(playlist));
             });
         });
     }
@@ -145,11 +181,13 @@ export class DownloadManager {
     add(playlist: Playlist): string {
         let uuid = uuidv4();
         this._queue.set(uuid, playlist);
+        this._emit('download-queued', { uuid: uuid, display: `${playlist.user.name}: ${playlist.video.id}` });
         return uuid;
     }
 
     delete(uuid: string) {
         this._queue.delete(uuid);
+        this._emit('download-deleted', { uuid: uuid });
     }
 
     start(uuid: string) {

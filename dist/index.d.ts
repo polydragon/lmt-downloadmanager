@@ -1,3 +1,5 @@
+/// <reference types="node" />
+import events = require('events');
 export interface Playlist {
     user: {
         id: string;
@@ -15,6 +17,9 @@ export declare class DownloadManager {
     private _downloadDirectory;
     private _downloadDirectoryTemp;
     private _downloadMask;
+    events: events.EventEmitter;
+    private _eventCache;
+    private _emit(channel, obj);
     private _processChunk(url, dest);
     private _getTempFilename(url, uuid);
     private _getLocalFilename(playlist);
