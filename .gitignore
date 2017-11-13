@@ -57,3 +57,8 @@ typings/
 # dotenv environment variables file
 .env
 
+
+package-lock.json
+dist/test.js
+src/test.ts
+dist/test.d.ts
