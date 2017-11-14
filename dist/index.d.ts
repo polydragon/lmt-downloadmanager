@@ -14,13 +14,12 @@ export interface Playlist {
 }
 export declare class DownloadManager {
     private _queue;
-    private _downloadDirectory;
-    private _downloadDirectoryTemp;
-    private _downloadMask;
-    events: events.EventEmitter;
+    private _history;
     private _eventCache;
     private _paused;
     private _running;
+    private _appSettings;
+    events: events.EventEmitter;
     private _emit(channel, obj);
     private _processChunk(url, dest);
     private _getTempFilename(url, uuid);
@@ -28,7 +27,7 @@ export declare class DownloadManager {
     private _getUrlsFromPlaylist(m3u8);
     private _processItem(uuid, playlist);
     private _cleanupTempFiles(uuid);
-    init(download: string, temp: string, ffm: string, ffp: string): void;
+    init(appSettings: any): void;
     add(playlist: Playlist): string;
     delete(uuid: string): void;
     start(uuid: string): Promise<void>;
@@ -37,5 +36,15 @@ export declare class DownloadManager {
     isRunning(): boolean;
     pause(): void;
     resume(): void;
+    load(): void;
+    hasBeenDownloaded(videoid: string): boolean;
+    purgeHistory(): void;
+    purgeQueue(): void;
+    setFfmpegPath(path: string): void;
+    setFfprobePath(path: string): void;
+    detectFFMPEG(): Promise<{}>;
     saveQueue(): void;
+    saveHistory(): void;
+    loadQueue(): void;
+    loadHistory(): void;
 }

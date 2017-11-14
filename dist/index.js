@@ -16,6 +16,7 @@ const path = require("path");
 const fs = require("fs-extra");
 const ffmpeg = require("fluent-ffmpeg");
 const events = require("events");
+const app = require("./app");
 function uuidv4() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
         var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
@@ -25,9 +26,10 @@ function uuidv4() {
 class DownloadManager {
     constructor() {
         this._queue = new Map();
-        this.events = new (events.EventEmitter)();
+        this._history = [];
         this._paused = false;
         this._running = false;
+        this.events = new (events.EventEmitter)();
     }
     _emit(channel, obj) {
         if (this._eventCache && (this._eventCache.channel === channel && JSON.stringify(this._eventCache.obj) === JSON.stringify(obj))) {
@@ -59,11 +61,35 @@ class DownloadManager {
         });
     }
     _getTempFilename(url, uuid) {
-        return path.join(this._downloadDirectoryTemp, uuid, path.basename(url));
+        return path.join(this._appSettings.get('downloads.directory'), 'temp', uuid, path.basename(url));
     }
     _getLocalFilename(playlist) {
-        let defaultPath = path.join(this._downloadDirectory, path.basename(playlist.video.url).replace("m3u8", "mp4"));
-        return defaultPath;
+        let defaultPath = path.join(this._appSettings.get('downloads.directory'), path.basename(playlist.video.url).replace("m3u8", "mp4"));
+        let finalPath;
+        if (this._appSettings.get('downloads.filemode') == 0) {
+            finalPath = defaultPath;
+        }
+        else {
+            let finalName = this._appSettings.get('downloads.filetemplate')
+                .replace(/%%username%%/g, playlist.user.name)
+                .replace(/%%userid%%/g, playlist.user.id)
+                .replace(/%%videoid%%/g, playlist.video.id)
+                .replace(/%%videotitle%%/g, playlist.video.title)
+                .replace(/%%videotime%%/g, '' + playlist.video.time);
+            if (!finalName || finalName == '') {
+                finalPath = defaultPath;
+            }
+            else {
+                finalPath = path.join(this._appSettings.get('downloads.directory'), finalName.replace(/[:*?""<>|]/g, '_') + ".mp4");
+            }
+        }
+        let basename = path.basename(finalPath);
+        if (basename == 'playlist.ts' || basename == 'playlist_eof.ts') {
+            let parentName = path.basename(path.dirname(playlist.video.url));
+            finalPath = finalPath.replace(basename, parentName + '.mp4');
+        }
+        fs.ensureDirSync(path.dirname(finalPath));
+        return finalPath;
     }
     _getUrlsFromPlaylist(m3u8) {
         return new Promise((resolve, reject) => {
@@ -143,13 +169,17 @@ class DownloadManager {
     }
     _cleanupTempFiles(uuid) {
         this._emit('download-status', { uuid: uuid, status: 'Cleaning temporary files' });
-        fs.removeSync(path.join(this._downloadDirectoryTemp, uuid));
+        fs.removeSync(path.join(this._appSettings.get('downloads.directory'), 'temp', uuid));
     }
-    init(download, temp, ffm, ffp) {
-        this._downloadDirectory = download;
-        this._downloadDirectoryTemp = temp;
-        ffmpeg().setFfmpegPath(ffm);
-        ffmpeg().setFfprobePath(ffp);
+    init(appSettings) {
+        this._appSettings = appSettings;
+        let mpeg = appSettings.get('downloads.ffmpeg'), probe = appSettings.get('downloads.ffprobe');
+        if (mpeg && mpeg != 'ffmpeg') {
+            ffmpeg().setFfmpegPath(mpeg);
+        }
+        if (probe && probe != 'ffprobe') {
+            ffmpeg().setFfprobePath(probe);
+        }
     }
     add(playlist) {
         let uuid = uuidv4();
@@ -168,6 +198,9 @@ class DownloadManager {
         return this._processItem(uuid, item)
             .then(result => {
             this._emit('download-completed', { uuid: uuid });
+            if (this._appSettings.get('downloads.history')) {
+                this._history.push(item.video.id);
+            }
         })
             .catch(err => {
             this._emit('download-errored', { uuid: uuid, error: err });
@@ -199,7 +232,93 @@ class DownloadManager {
         this._paused = false;
         this.loop();
     }
+    load() {
+        this.loadQueue();
+        this.loadHistory();
+    }
+    hasBeenDownloaded(videoid) {
+        return this._history.indexOf(videoid) != -1;
+    }
+    purgeHistory() {
+        fs.removeSync(path.join(app.getPath('appData'), app.getName(), 'downloadHistory.json'));
+        this._history = [];
+    }
+    purgeQueue() {
+        this._queue = new Map();
+        this.saveQueue();
+        this._emit('download-queue-clear', null);
+    }
+    setFfmpegPath(path) {
+        ffmpeg().setFfmpegPath(path);
+    }
+    setFfprobePath(path) {
+        ffmpeg().setFfprobePath(path);
+    }
+    detectFFMPEG() {
+        return new Promise((resolve, reject) => {
+            ffmpeg().getAvailableCodecs((err, codecs) => {
+                return resolve(!err);
+            });
+        });
+    }
     saveQueue() {
+        let spread = JSON.stringify([...this._queue]);
+        fs.writeFile(path.join(app.getPath('appData'), app.getName(), 'download-queue-v2.json'), spread, 'utf8', (err) => {
+            if (err) {
+                console.error(err);
+            }
+        });
+    }
+    saveHistory() {
+        if (!this._appSettings.get('downloads.history')) {
+            return;
+        }
+        fs.writeFile(path.join(app.getPath('appData'), app.getName(), 'downloadHistory.json'), JSON.stringify(this._history), 'utf8', (err) => {
+            if (err) {
+                console.log(err);
+            }
+        });
+    }
+    loadQueue() {
+        fs.readFile(path.join(app.getPath('appData'), app.getName(), 'download-queue-v2.json'), 'utf8', (err, data) => {
+            if (err) {
+                console.error(err);
+            }
+            else {
+                try {
+                    this._queue = new Map(JSON.parse(data));
+                }
+                catch (err) {
+                    console.error(err);
+                }
+            }
+            if (this._queue.size > 0) {
+                for (let [key, playlist] of this._queue) {
+                    this._emit('download-queued', { uuid: key, display: `${playlist.user.name}: ${playlist.video.id}` });
+                }
+                this.loop();
+            }
+        });
+    }
+    loadHistory() {
+        if (!this._appSettings.get('downloads.history')) {
+            return;
+        }
+        fs.readFile(path.join(app.getPath('appData'), app.getName(), 'downloadHistory.json'), 'utf8', (err, data) => {
+            if (err) {
+                console.log(err);
+                this._history = [];
+            }
+            else {
+                try {
+                    this._history = JSON.parse(data);
+                }
+                catch (err) {
+                    console.log(err);
+                    this._history = [];
+                }
+            }
+        });
     }
 }
 exports.DownloadManager = DownloadManager;
