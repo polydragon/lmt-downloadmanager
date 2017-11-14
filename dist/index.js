@@ -10,7 +10,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 Object.defineProperty(exports, "__esModule", { value: true });
 const wget = require('wget-improved');
 const pMap = require('p-map');
-const PProgress = require('p-progress');
+const pProgress = require('p-progress');
 const axios = require('axios');
 const path = require("path");
 const fs = require("fs-extra");
@@ -44,7 +44,7 @@ class DownloadManager {
         this.events.emit(channel, obj);
     }
     _processChunk(url, dest) {
-        return new PProgress((resolve, reject, progress) => {
+        return new pProgress((resolve, reject, progress) => {
             fs.ensureDirSync(path.dirname(dest));
             let download = wget.download(url, dest);
             download.on('error', (err) => {
@@ -227,14 +227,20 @@ class DownloadManager {
     }
     pause() {
         this._paused = true;
+        this._emit('download-global-pause', null);
     }
     resume() {
         this._paused = false;
+        this._emit('download-global-resume', null);
         this.loop();
     }
     load() {
         this.loadQueue();
         this.loadHistory();
+    }
+    save() {
+        this.saveQueue();
+        this.saveHistory();
     }
     hasBeenDownloaded(videoid) {
         return this._history.indexOf(videoid) != -1;

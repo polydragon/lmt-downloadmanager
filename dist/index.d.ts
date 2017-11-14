@@ -37,6 +37,7 @@ export declare class DownloadManager {
     pause(): void;
     resume(): void;
     load(): void;
+    save(): void;
     hasBeenDownloaded(videoid: string): boolean;
     purgeHistory(): void;
     purgeQueue(): void;

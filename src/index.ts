@@ -1,6 +1,6 @@
 const wget = require('wget-improved');
 const pMap = require('p-map');
-const PProgress = require('p-progress');
+const pProgress = require('p-progress');
 const axios = require('axios');
 import path = require('path');
 import fs = require('fs-extra');
@@ -53,7 +53,7 @@ export class DownloadManager {
     }
 
     private _processChunk(url: string, dest: string) {
-        return new PProgress((resolve, reject, progress) => {
+        return new pProgress((resolve, reject, progress) => {
             fs.ensureDirSync(path.dirname(dest));
 
             let download = wget.download(url, dest);
@@ -171,7 +171,7 @@ export class DownloadManager {
 
             this._emit('download-status', { uuid: uuid, status: 'Downloading chunks' });
 
-            pMap(urls, mapper, { concurrency: 4 }).then(result => {
+            pMap(urls, mapper, { concurrency: (this._appSettings.get('downloads.concurrency') || 4) }).then(result => {
                 this._emit('download-status', { uuid: uuid, status: 'Merging chunks' });
 
                 let concatStr = '';
@@ -280,16 +280,23 @@ export class DownloadManager {
 
     pause() {
         this._paused = true;
+        this._emit('download-global-pause', null);
     }
 
     resume() {
         this._paused = false;
+        this._emit('download-global-resume', null);
         this.loop();
     }
 
     load() {
         this.loadQueue();
         this.loadHistory();
+    }
+
+    save() {
+        this.saveQueue();
+        this.saveHistory();
     }
 
     hasBeenDownloaded(videoid: string) {
