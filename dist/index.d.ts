@@ -19,6 +19,7 @@ export declare class DownloadManager {
     private _paused;
     private _running;
     private _appSettings;
+    private _ffmpegPath;
     events: events.EventEmitter;
     private _emit(channel, obj);
     private _processChunk(url, dest);
